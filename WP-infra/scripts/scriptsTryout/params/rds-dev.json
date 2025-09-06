@@ -1,0 +1,19 @@
+[
+  { "ParameterKey": "KeyName",            "ParameterValue": "myDemokey" },
+  { "ParameterKey": "VpcId",              "ParameterValue": "vpc-0293dde1c8b69bca7" },
+
+  { "ParameterKey": "PublicSubnetId",     "ParameterValue": "subnet-02eca4c0662c560d2" },
+  { "ParameterKey": "PrivateSubnet1Id",   "ParameterValue": "subnet-0a433c3ebf29133f4" },
+  { "ParameterKey": "PrivateSubnet2Id",   "ParameterValue": "subnet-030050bed5b8307af" },
+
+  { "ParameterKey": "MyIP",               "ParameterValue": "188.148.159.34/32" },
+  { "ParameterKey": "AllocateElasticIP",  "ParameterValue": "false" },
+
+  { "ParameterKey": "DBName",             "ParameterValue": "wordpress" },
+  { "ParameterKey": "DBMasterUser",       "ParameterValue": "wp_user" },
+  { "ParameterKey": "DBMasterPassword",   "ParameterValue": "a3fg1234" },
+
+  { "ParameterKey": "DBInstanceClass",    "ParameterValue": "db.t3.micro" },
+  { "ParameterKey": "DBAllocatedStorage", "ParameterValue": "20" },
+  { "ParameterKey": "DBMultiAZ",          "ParameterValue": "false" }
+]

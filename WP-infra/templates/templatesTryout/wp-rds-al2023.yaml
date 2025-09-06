@@ -1,0 +1,239 @@
+# ⚠️ Region väljs när du kör stacken (Console/CLI). Använd eu-west-1 (Ireland).
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Step 2 - WordPress on EC2 with external RDS (MariaDB) on Amazon Linux 2023"
+
+Parameters:
+  # === Miljö / nät ===
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: myDemokey
+    Description: Existing EC2 KeyPair name
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0293dde1c8b69bca7
+
+  PublicSubnetId:        # EC2 ska stå publikt nu (senare hamnar den bakom ALB)
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-02eca4c0662c560d2     # eu-west-1a (public)
+    Description: Public subnet for EC2 (route to Internet Gateway)
+
+  PrivateSubnet1Id:      # RDS ska stå privat (två AZ → bättre redundans)
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0a433c3ebf29133f4     # eu-west-1b (private)
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-030050bed5b8307af     # eu-west-1c (private)
+
+  MyIP:
+    Type: String
+    Description: "⚠️ Din publika IP i CIDR (t.ex. 188.148.159.34/32) för SSH"
+
+  AllocateElasticIP:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true","false"]
+    Description: Allocate a static Elastic IP for the EC2?
+
+  # === Databasparametrar ===
+  DBName:
+    Type: String
+    Default: wordpress
+    Description: Initial database name to create in RDS
+  DBMasterUser:
+    Type: String
+    Default: wp_user
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z0-9_]+"
+    Description: Master username for RDS (used by WordPress)
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Master password for RDS (used by WordPress)
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t4g.micro
+      - db.t4g.small
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+  DBMultiAZ:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true","false"]
+    Description: Enable Multi-AZ for RDS? (costs more)
+
+  LatestAL2023Ami:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  CreateEIP: !Equals [!Ref AllocateElasticIP, "true"]
+  IsMultiAZ: !Equals [!Ref DBMultiAZ, "true"]
+
+Resources:
+  # ---------- Security Groups ----------
+  SgEc2:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for WordPress EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref MyIP }     # SSH endast från din IP
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }    # HTTP (senare kommer ALB ta detta)
+      SecurityGroupEgress:
+        - { IpProtocol: -1, CidrIp: 0.0.0.0/0 }
+      Tags: [{ Key: Name, Value: wp-ec2-sg }]
+
+  SgRds:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for RDS (MySQL/MariaDB)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref SgEc2         # ⬅️ Viktigt: bara EC2-SG får prata med DB
+      SecurityGroupEgress:
+        - { IpProtocol: -1, CidrIp: 0.0.0.0/0 }
+      Tags: [{ Key: Name, Value: wp-rds-sg }]
+
+  # ---------- Subnet group för RDS (två AZ) ----------
+  RdsSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: WP RDS Subnet Group
+      SubnetIds: [ !Ref PrivateSubnet1Id, !Ref PrivateSubnet2Id ]
+      Tags: [{ Key: Name, Value: wp-rds-subnets }]
+
+  # ---------- RDS (MariaDB) ----------
+  Rds:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete         # Lab: radera vid stack delete. (Prod → överväg Snapshot)
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: mariadb
+      DBName: !Ref DBName                  # ⬅️ Skapar initial DB med detta namn
+      MasterUsername: !Ref DBMasterUser    # ⬅️ Master user sätts här
+      MasterUserPassword: !Ref DBMasterPassword  # ⬅️ Master password sätts här
+      AllocatedStorage: !Ref DBAllocatedStorage
+      DBInstanceClass: !Ref DBInstanceClass
+      MultiAZ: !If [ IsMultiAZ, true, false ]
+      PubliclyAccessible: false            # ⬅️ Privat DB, ej internetexponerad
+      VPCSecurityGroups: [ !Ref SgRds ]
+      DBSubnetGroupName: !Ref RdsSubnetGroup
+      BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
+      StorageType: gp3
+      CopyTagsToSnapshot: true
+      DeletionProtection: false
+
+  # ---------- EC2 (endast WP/PHP/Apache, INGEN lokal DB) ----------
+  Ec2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref Ec2Role ]
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAL2023Ami
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref PublicSubnetId
+          GroupSet: [ !Ref SgEc2 ]
+          AssociatePublicIpAddress: true
+      Tags: [{ Key: Name, Value: wp-ec2-rds }]
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              set -eux
+              dnf update -y
+              dnf install -y httpd wget unzip php php-fpm php-mysqli php-json php-gd php-mbstring php-xml
+
+              systemctl enable --now httpd
+
+              usermod -a -G apache ec2-user || true
+              mkdir -p /var/www/html
+              chown -R ec2-user:apache /var/www
+              chmod 2775 /var/www && find /var/www -type d -exec chmod 2775 {} \;
+              find /var/www -type f -exec chmod 0664 {} \;
+
+              cd /var/www/html
+              sudo -u ec2-user wget -q https://wordpress.org/latest.zip
+              sudo -u ec2-user unzip -q latest.zip
+              sudo -u ec2-user mv wordpress/* .
+              rm -rf wordpress latest.zip
+
+              # Skapa wp-config och peka mot RDS-endpoint
+              cp wp-config-sample.php wp-config.php
+              sed -i "s/database_name_here/${DBNAME}/"      wp-config.php
+              sed -i "s/username_here/${DBUSER}/"           wp-config.php
+              sed -i "s/password_here/${DBPASS}/"           wp-config.php
+              sed -i "s/localhost/${DBHOST}/"               wp-config.php
+
+              echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+              systemctl restart httpd
+            - {
+                DBHOST: !GetAtt Rds.Endpoint.Address,   # ⬅️ RDS endpoint in i wp-config.php
+                DBNAME: !Ref DBName,
+                DBUSER: !Ref DBMasterUser,
+                DBPASS: !Ref DBMasterPassword
+              }
+
+  Eip:
+    Type: AWS::EC2::EIP
+    Condition: CreateEIP
+    Properties:
+      Domain: vpc
+      Tags: [{ Key: Name, Value: wp-ec2-eip }]
+
+  EipAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Condition: CreateEIP
+    Properties:
+      AllocationId: !GetAtt Eip.AllocationId
+      InstanceId: !Ref Ec2Instance
+
+Outputs:
+  SiteURL:
+    Description: WordPress over HTTP (lab)
+    Value: !Sub "http://${Ec2Instance.PublicDnsName}/"
+  PhpInfoURL:
+    Value: !Sub "http://${Ec2Instance.PublicDnsName}/phpinfo.php"
+  RdsEndpoint:
+    Description: RDS endpoint (host)
+    Value: !GetAtt Rds.Endpoint.Address
+  RdsPort:
+    Value: 3306
+  DBNameOut:
+    Value: !Ref DBName
+  Ec2PublicDNS:
+    Value: !GetAtt Ec2Instance.PublicDnsName
+  Notes:
+    Value: "EC2 uses wp-config.php with RDS host; DB created on RDS. SSH allowed only from MyIP."

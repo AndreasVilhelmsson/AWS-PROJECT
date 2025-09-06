@@ -1,0 +1,230 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "ALB + ASG for WordPress (EC2) using external RDS. Optional EFS for wp-content."
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID
+
+  PublicSubnetIdA:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet in AZ A (e.g. eu-west-1a)
+  PublicSubnetIdB:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet in AZ B (e.g. eu-west-1b)
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 KeyPair name (optional for SSH)
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t4g.micro, t4g.small]
+
+  DesiredCapacity:
+    Type: Number
+    Default: 2
+  MinSize:
+    Type: Number
+    Default: 1
+  MaxSize:
+    Type: Number
+    Default: 2
+
+  HealthCheckPath:
+    Type: String
+    Default: /health.txt
+    Description: ALB target group health check path
+
+  # ---- RDS creds (från din tidigare stack) ----
+  DBHost:
+    Type: String
+    Description: RDS endpoint (e.g. xxx.eu-west-1.rds.amazonaws.com)
+  DBName:
+    Type: String
+    Default: wordpress
+  DBUser:
+    Type: String
+    Default: wp_user
+  DBPassword:
+    Type: String
+    NoEcho: true
+
+  # ---- Optional EFS (leave empty to skip) ----
+  EfsFileSystemId:
+    Type: String
+    Default: ""
+
+  LatestAL2023Ami:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  # ---------------- Security Groups ----------------
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from Internet to ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags: [{ Key: Name, Value: wp-alb-sg }]
+
+  Ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP only from ALB to EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags: [{ Key: Name, Value: wp-ec2-sg }]
+
+  # ---------------- ALB & Target Group ----------------
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckProtocol: HTTP
+      Matcher:
+        HttpCode: 200-399
+      Tags: [{ Key: Name, Value: wp-alb-tg }]
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnetIdA
+        - !Ref PublicSubnetIdB
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Tags: [{ Key: Name, Value: wp-alb }]
+
+  AlbListenerHttp:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ---------------- Launch Template ----------------
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: wp-alb-asg-lt
+      LaunchTemplateData:
+        ImageId: !Ref LatestAL2023Ami
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+
+        # Viktigt: Public IP så bootstrap kan hämta WordPress i labbmiljö
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            Groups: [ !Ref Ec2SecurityGroup ]
+
+        UserData:
+          Fn::Base64: !Sub |
+            #!/usr/bin/env bash
+            set -xe
+
+            dnf -y update
+            dnf -y install httpd php-fpm php-cli php-mysqli tar wget curl amazon-efs-utils
+
+            systemctl enable --now httpd
+            systemctl enable --now php-fpm
+
+            # Apache <-> PHP-FPM
+            cat >/etc/httpd/conf.d/php-fpm.conf <<'EOF'
+            <FilesMatch \.php$>
+                SetHandler "proxy:unix:/run/php-fpm/www.sock|fcgi://localhost/"
+            </FilesMatch>
+            DirectoryIndex index.php index.html
+            EOF
+
+            cd /var/www/html
+
+            if [ ! -f index.php ]; then
+              wget -q https://wordpress.org/latest.tar.gz
+              tar -xzf latest.tar.gz
+              cp -r wordpress/* .
+              rm -rf wordpress latest.tar.gz
+            fi
+
+            if [ ! -f wp-config.php ]; then
+              cp wp-config-sample.php wp-config.php
+              php -r "
+                \$f='wp-config.php';
+                \$v=file_get_contents(\$f);
+                \$v=str_replace('database_name_here','${DBName}',\$v);
+                \$v=str_replace('username_here','${DBUser}',\$v);
+                \$v=str_replace('password_here','${DBPassword}',\$v);
+                \$v=str_replace('localhost','${DBHost}',\$v);
+                file_put_contents(\$f,\$v);
+              "
+              if ! grep -q 'AUTH_KEY' wp-config.php; then
+                curl -s https://api.wordpress.org/secret-key/1.1/salt/ >> wp-config.php
+              fi
+            fi
+
+            # Optional EFS for shared wp-content
+            if [ -n "${EfsFileSystemId}" ]; then
+              mkdir -p /var/www/html/wp-content
+              echo "${EfsFileSystemId}.efs.${AWS::Region}.amazonaws.com:/ /var/www/html/wp-content efs _netdev,tls,iam 0 0" >> /etc/fstab
+              mount -a || true
+            fi
+
+            echo "OK" > /var/www/html/health.txt
+            chown -R apache:apache /var/www/html
+            systemctl restart httpd
+
+  # ---------------- Auto Scaling Group ----------------
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetIdA
+        - !Ref PublicSubnetIdB
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      TargetGroupARNs: [ !Ref TargetGroup ]
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 120
+      Tags:
+        - Key: Name
+          Value: wp-asg
+          PropagateAtLaunch: true
+
+Outputs:
+  AlbDNS:
+    Description: ALB DNS Name
+    Value: !GetAtt Alb.DNSName
+  TargetGroupArn:
+    Value: !Ref TargetGroup
+  AsgName:
+    Value: !Ref AutoScalingGroup

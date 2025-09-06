@@ -1,0 +1,53 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Single EC2 with WP pointing to external RDS (no EFS yet)"
+Parameters:
+  SubnetId: { Type: AWS::EC2::Subnet::Id }
+  KeyPairName: { Type: AWS::EC2::KeyPair::KeyName }
+  MyCidr: { Type: String, Description: 'Your IP/CIDR for HTTP (e.g. 1.2.3.4/32)' }
+  DBPassword: { Type: String, NoEcho: true }
+Resources:
+  Allow80FromMyIp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue base-storage-WebSgId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: !Ref MyCidr
+  Ec2:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !Ref SubnetId
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+      InstanceType: t3.small
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds: [!ImportValue base-storage-WebSgId]
+      Tags: [{Key: Name, Value: wp-ec2-single}]
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              set -euxo pipefail
+              DB_HOST='${DbEndpoint}'
+              DB_NAME='wordpress'
+              DB_USER='wpuser'
+              DB_PASS='${DBPassword}'
+              dnf -y update
+              dnf -y install httpd php php-mysqli php-mbstring php-json php-zip php-gd php-xml unzip curl
+              systemctl enable --now httpd
+              mkdir -p /var/www/html
+              cd /tmp && curl -O https://wordpress.org/latest.tar.gz && tar -xzf latest.tar.gz
+              rsync -a /tmp/wordpress/ /var/www/html/
+              chown -R apache:apache /var/www/html
+              find /var/www/html -type d -exec chmod 755 {} \;
+              find /var/www/html -type f -exec chmod 644 {} \;
+              cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+              sed -i "s/database_name_here/$DB_NAME/" /var/www/html/wp-config.php
+              sed -i "s/username_here/$DB_USER/" /var/www/html/wp-config.php
+              sed -i "s/password_here/$DB_PASS/" /var/www/html/wp-config.php
+              sed -i "s/localhost/$DB_HOST/" /var/www/html/wp-config.php
+              echo "<?php http_response_code(200); echo 'ok';" > /var/www/html/healthcheck.php
+            - { DbEndpoint: !ImportValue base-storage-DbEndpoint }
+Outputs:
+  InstanceId: { Value: !Ref Ec2 }

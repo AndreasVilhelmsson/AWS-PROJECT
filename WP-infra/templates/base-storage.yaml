@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Base storage for WP: SGs + EFS (2x MT) + RDS MariaDB"
+Parameters:
+  VpcId: { Type: AWS::EC2::VPC::Id }
+  PrivateSubnet1Id: { Type: AWS::EC2::Subnet::Id }
+  PrivateSubnet2Id: { Type: AWS::EC2::Subnet::Id }
+  ClientSubnetId:   { Type: AWS::EC2::Subnet::Id, Description: "Subnet i samma AZ som dina web-noder" }  # <— NY
+  DBName: { Type: String, Default: wordpress }
+  DBUser: { Type: String, Default: wpuser }
+  DBPassword: { Type: String, NoEcho: true, MinLength: 8 }
+Resources:
+  WebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: { GroupDescription: Web SG, VpcId: !Ref VpcId }
+  EfsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: { GroupDescription: EFS SG, VpcId: !Ref VpcId }
+  EfsIngressNfs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: { GroupId: !Ref EfsSG, IpProtocol: tcp, FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: !Ref WebSG }
+  DbSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: { GroupDescription: RDS SG, VpcId: !Ref VpcId }
+  DbIngress3306:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: { GroupId: !Ref DbSG, IpProtocol: tcp, FromPort: 3306, ToPort: 3306, SourceSecurityGroupId: !Ref WebSG }
+  EFS:
+    Type: AWS::EFS::FileSystem
+    Properties: { Encrypted: true }
+  MtA:
+    Type: AWS::EFS::MountTarget
+    Properties: { FileSystemId: !Ref EFS, SubnetId: !Ref PrivateSubnet1Id, SecurityGroups: [!Ref EfsSG] }
+  MtB:
+    Type: AWS::EFS::MountTarget
+    Properties: { FileSystemId: !Ref EFS, SubnetId: !Ref PrivateSubnet2Id, SecurityGroups: [!Ref EfsSG] }
+  MtClient:  
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFS
+      SubnetId: !Ref ClientSubnetId
+      SecurityGroups: [!Ref EfsSG]
+  DbSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: { DBSubnetGroupDescription: Private subnets, SubnetIds: [!Ref PrivateSubnet1Id, !Ref PrivateSubnet2Id] }
+  DB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mariadb
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: '20'
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      PubliclyAccessible: false
+      VPCSecurityGroups: [!Ref DbSG]
+      DBSubnetGroupName: !Ref DbSubnets
+      DeletionProtection: false
+Outputs:
+  WebSgId:    { Value: !Ref WebSG, Export: { Name: !Sub '${AWS::StackName}-WebSgId' } }
+  EfsSgId:    { Value: !Ref EfsSG, Export: { Name: !Sub '${AWS::StackName}-EfsSgId' } }
+  DbSgId:     { Value: !Ref DbSG,  Export: { Name: !Sub '${AWS::StackName}-DbSgId' } }
+  EfsId:      { Value: !Ref EFS,   Export: { Name: !Sub '${AWS::StackName}-EfsId' } }
+  DbEndpoint: { Value: !GetAtt DB.Endpoint.Address, Export: { Name: !Sub '${AWS::StackName}-DbEndpoint' } }

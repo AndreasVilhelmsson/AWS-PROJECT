@@ -1,0 +1,146 @@
+# ⚠️ Region väljs när du kör stacken (Console/CLI). Se till att du använder eu-west-1 (Ireland).
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Step 1 - WordPress standalone on EC2 (AL2023) with local MariaDB"
+
+Parameters:
+  # === Förifyllda värden från din miljö (kan överridas vid körning) ===
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: myDemokey
+    Description: Existing EC2 KeyPair name
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0293dde1c8b69bca7
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-02eca4c0662c560d2   # public subnet i din VPC (eu-west-1a)
+    Description: Public subnet in the VPC (must route to an Internet Gateway)
+  AllocateElasticIP:
+    Type: String
+    Default: "false"                     # sätt "true" om du vill ha statisk publik IP (EIP)
+    AllowedValues: ["true","false"]
+
+  # === Värden du anger varje gång (ingen default med flit) ===
+  MyIP:
+    Type: String
+    Description: "⚠️ Ange din publika IP i CIDR (t.ex. 85.x.x.x/32) för SSH"
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: "⚠️ Ange ett starkt lösenord för lokala MariaDB-användaren"
+
+  # === Rimliga defaultar ===
+  DBName:
+    Type: String
+    Default: wordpress
+  DBUser:
+    Type: String
+    Default: wp_user
+  LatestAL2023Ami:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  CreateEIP: !Equals [!Ref AllocateElasticIP, "true"]
+
+Resources:
+  SGEC2:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for standalone WP EC2
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref MyIP }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+      SecurityGroupEgress:
+        - { IpProtocol: -1, CidrIp: 0.0.0.0/0 }
+      Tags: [{ Key: Name, Value: wp-standalone-sg }]
+
+  SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref SSMRole ]
+
+  EC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAL2023Ami
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref InstanceProfile
+      # Garanti: publik IP även om subnet inte auto-assignar
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref SubnetId
+          GroupSet: [ !Ref SGEC2 ]
+          AssociatePublicIpAddress: true
+      Tags: [{ Key: Name, Value: wp-standalone-ec2 }]
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            set -eux
+            dnf update -y
+            dnf install -y httpd wget unzip php php-fpm php-mysqli php-json php-gd php-mbstring php-xml mariadb105-server
+            systemctl enable --now httpd
+            systemctl enable --now mariadb
+            usermod -a -G apache ec2-user || true
+            mkdir -p /var/www/html
+            chown -R ec2-user:apache /var/www
+            chmod 2775 /var/www && find /var/www -type d -exec chmod 2775 {} \;
+            find /var/www -type f -exec chmod 0664 {} \;
+            cd /var/www/html
+            sudo -u ec2-user wget -q https://wordpress.org/latest.zip
+            sudo -u ec2-user unzip -q latest.zip
+            sudo -u ec2-user mv wordpress/* .
+            rm -rf wordpress latest.zip
+            mysql <<SQL
+            CREATE DATABASE IF NOT EXISTS ${DBName};
+            CREATE USER IF NOT EXISTS '${DBUser}'@'localhost' IDENTIFIED BY '${DBPassword}';
+            GRANT ALL PRIVILEGES ON ${DBName}.* TO '${DBUser}'@'localhost';
+            FLUSH PRIVILEGES;
+            SQL
+            cp wp-config-sample.php wp-config.php
+            sed -i "s/database_name_here/${DBName}/" wp-config.php
+            sed -i "s/username_here/${DBUser}/" wp-config.php
+            sed -i "s/password_here/${DBPassword}/" wp-config.php
+            sed -i "s/localhost/localhost/" wp-config.php
+            echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+            systemctl restart httpd
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateEIP
+    Properties:
+      Domain: vpc
+      Tags: [{ Key: Name, Value: wp-standalone-eip }]
+
+  EIPAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Condition: CreateEIP
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      InstanceId: !Ref EC2
+
+Outputs:
+  InstancePublicDNS:
+    Value: !GetAtt EC2.PublicDnsName
+  InstancePublicIP:
+    Value: !GetAtt EC2.PublicIp
+  SiteURL:
+    Value: !Sub "http://${EC2.PublicDnsName}/"
+  PhpInfoURL:
+    Value: !Sub "http://${EC2.PublicDnsName}/phpinfo.php"

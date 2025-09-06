@@ -1,0 +1,4 @@
+*.zip
+*.pem
+*.log
+params/*.secrets.json

@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Launch Template for WP nodes mounting EFS at /var/www/html
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+  InstanceType:
+    Type: String
+    Default: t3.small
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+Resources:
+  Lt:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: wp-lt
+      LaunchTemplateData:
+        ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}'
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPairName
+        SecurityGroupIds:
+          - !ImportValue base-storage-WebSgId
+        MetadataOptions:
+          HttpTokens: required
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                #!/bin/bash
+                set -euxo pipefail
+                EFS_FS_ID='${EfsId}'
+                DB_HOST='${DbEndpoint}'
+                DB_NAME='wordpress'
+                DB_USER='wpuser'
+                DB_PASS='${DBPassword}'
+
+                dnf -y update
+                dnf -y install --allowerasing httpd php php-mysqli php-mbstring php-json php-zip php-gd php-xml amazon-efs-utils unzip curl rsync
+                systemctl enable --now httpd
+
+                mkdir -p /var/www/html
+                # mount EFS (TLS) och lägg till i fstab
+                mount -t efs -o tls $EFS_FS_ID:/ /var/www/html || true
+                grep -q "$EFS_FS_ID:" /etc/fstab || echo "$EFS_FS_ID:/ /var/www/html efs _netdev,tls 0 0" >> /etc/fstab
+
+                # hämta WP om saknas
+                if [ ! -f /var/www/html/wp-settings.php ]; then
+                  cd /tmp && curl -fsSL -o latest.tar.gz https://wordpress.org/latest.tar.gz
+                  tar -xzf latest.tar.gz
+                  rsync -a /tmp/wordpress/ /var/www/html/
+                  chown -R apache:apache /var/www/html
+                  find /var/www/html -type d -exec chmod 755 {} \;
+                  find /var/www/html -type f -exec chmod 644 {} \;
+                fi
+
+                # skapa wp-config om saknas
+                if [ ! -f /var/www/html/wp-config.php ]; then
+                  cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+                  sed -i "s/database_name_here/$DB_NAME/" /var/www/html/wp-config.php
+                  sed -i "s/username_here/$DB_USER/" /var/www/html/wp-config.php
+                  sed -i "s/password_here/$DB_PASS/" /var/www/html/wp-config.php
+                  sed -i "s/localhost/$DB_HOST/" /var/www/html/wp-config.php
+                  echo "define('FS_METHOD','direct');" >> /var/www/html/wp-config.php
+                  chown apache:apache /var/www/html/wp-config.php
+                fi
+
+                echo "<?php http_response_code(200); echo 'ok';" > /var/www/html/healthcheck.php
+              - { EfsId: !ImportValue base-storage-EfsId, DbEndpoint: !ImportValue base-storage-DbEndpoint }
+
+Outputs:
+  LaunchTemplateId:
+    Description: LaunchTemplate ID
+    Value: !Ref Lt
+    Export:
+      Name: !Sub '${AWS::StackName}-LtId'

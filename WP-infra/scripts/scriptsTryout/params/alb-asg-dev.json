@@ -1,0 +1,21 @@
+[
+  { "ParameterKey": "KeyName",          "ParameterValue": "myDemokey" },
+  { "ParameterKey": "VpcId",            "ParameterValue": "vpc-0293dde1c8b69bca7" },
+
+  { "ParameterKey": "PublicSubnetIdA",  "ParameterValue": "subnet-02eca4c0662c560d2" },
+  { "ParameterKey": "PublicSubnetIdB",  "ParameterValue": "subnet-0a433c3ebf29133f4" },
+
+  { "ParameterKey": "InstanceType",     "ParameterValue": "t3.micro" },
+  { "ParameterKey": "DesiredCapacity",  "ParameterValue": "2" },
+  { "ParameterKey": "MinSize",          "ParameterValue": "1" },
+  { "ParameterKey": "MaxSize",          "ParameterValue": "2" },
+
+  { "ParameterKey": "HealthCheckPath",  "ParameterValue": "/health.txt" },
+
+  { "ParameterKey": "DBHost",           "ParameterValue": "wp-rds-al2023-rds-im6l4u1510g2.cdi4gayccnkm.eu-west-1.rds.amazonaws.com" },
+  { "ParameterKey": "DBName",           "ParameterValue": "wordpress" },
+  { "ParameterKey": "DBUser",           "ParameterValue": "wp_user" },
+  { "ParameterKey": "DBPassword",       "ParameterValue": "a3fg1234" },
+
+  { "ParameterKey": "EfsFileSystemId",  "ParameterValue": "" }
+]

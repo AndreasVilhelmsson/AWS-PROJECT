@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Web instance SG that only allows traffic from the ALB SG
+
+Parameters:
+  VpcId:   { Type: AWS::EC2::VPC::Id }
+  AlbSgId:
+    Type: String
+    Description: Import value from web-alb stack (e.g. web-alb-AlbSgId)
+
+Resources:
+  WebInstanceSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web instances (allow 80 from ALB only)
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # Add rule: ALB SG -> WebInstanceSg on port 80
+  IngressAlbToWeb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WebInstanceSg
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref AlbSgId
+
+Outputs:
+  WebInstanceSgId:
+    Value: !Ref WebInstanceSg
+    Export: { Name: !Sub '${AWS::StackName}-WebInstanceSgId' }

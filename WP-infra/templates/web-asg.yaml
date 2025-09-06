@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Auto Scaling Group for WordPress nodes using Launch Template and ALB Target Group
+
+Parameters:
+  SubnetAId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet A
+  SubnetBId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet B
+  LaunchTemplateId:
+    Type: String
+    Description: Launch Template ID (e.g. lt-xxxxxxxxxxxxxxxxx)
+  LaunchTemplateVersion:
+    Type: String
+    Description: Launch Template Version (string, e.g. "1")
+  TargetGroupArn:
+    Type: String
+    Description: Import value from web-alb stack (e.g. web-alb-TgArn)
+
+Resources:
+  Asg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: wp-asg
+      VPCZoneIdentifier:
+        - !Ref SubnetAId
+        - !Ref SubnetBId
+      MinSize: '2'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplateId
+        Version: !Ref LaunchTemplateVersion
+      TargetGroupARNs:       
+        - !Ref TargetGroupArn
+      HealthCheckType: ELB   
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: wp-asg-node
+          PropagateAtLaunch: true
+
+Outputs:
+  AsgName:
+    Description: Auto Scaling Group name
+    Value: !Ref Asg
+    Export:
+      Name: !Sub '${AWS::StackName}-AsgName'

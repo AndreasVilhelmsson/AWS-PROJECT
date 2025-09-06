@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Application Load Balancer for WordPress ASG (HTTP only, healthcheck to /healthcheck.php)
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the ALB
+  SubnetAId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet A (e.g., eu-west-1a)
+  SubnetBId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet B (e.g., eu-west-1b)
+
+  # Web SG kommer från basstacken
+  WebSgExportName:
+    Type: String
+    Default: base-storage-WebSgId
+    Description: Name of the export that contains the Web Security Group ID
+
+Mappings: {}
+
+Conditions: {}
+
+Resources:
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB security group (80 from Internet)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: wp-alb
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      Subnets:
+        - !Ref SubnetAId
+        - !Ref SubnetBId
+      SecurityGroups:
+        - !Ref AlbSg
+
+  Tg:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: wp-tg
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /healthcheck.php
+      Matcher:
+        HttpCode: '200'
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref Tg
+
+  # Ingress-regel som tillåter ALB -> WebSG på port 80
+  WebIngressFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !ImportValue
+        Fn::Sub: '${WebSgExportName}'
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref AlbSg
+      Description: Allow ALB to Web on 80
+
+Outputs:
+  AlbDnsName:
+    Description: ALB DNS name
+    Value: !GetAtt Alb.DNSName
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbDnsName'
+
+  AlbSgId:
+    Description: ALB Security Group ID
+    Value: !Ref AlbSg
+    Export:
+      Name: !Sub '${AWS::StackName}-AlbSgId'
+      
+  TgArn:
+    Description: Target Group ARN
+    Value: !Ref Tg
+    Export:
+      Name: !Sub '${AWS::StackName}-TgArn'
