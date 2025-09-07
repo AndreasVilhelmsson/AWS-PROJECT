@@ -34,7 +34,7 @@ Eftersom dina instanser ligger i olika Availability Zones (AZ) ser ALB till att 
 - **EFS (Elastic File System)**: Delad filyta mellan alla webbinstanser. har ligger i själva verket själva wordpress filerna
 - **S3 bucket**: För backup och lagring av statiska filer.
 
-![Cloudcraft Arkitektur](images/securitydiagram.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/securitydiagram.jpg)
 
 ---
 
@@ -68,7 +68,7 @@ chmod +x WP-infra/scripts/deploy-all.sh
 - Skapar Web Security Group
 - Exporterar `WEB_SG`
 
-![Cloudcraft Arkitektur](images/subnetinfrastructure.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/subnetinfrastructure.jpg)
 
 ---
 
@@ -77,7 +77,7 @@ chmod +x WP-infra/scripts/deploy-all.sh
 - Skapar Launch Template
 - Exporterar `LT_ID`, `LT_VER`
 
-![Cloudcraft Arkitektur](images/launchtemplate2.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/launchtemplate2.jpg)
 
 ---
 
@@ -86,7 +86,7 @@ chmod +x WP-infra/scripts/deploy-all.sh
 - Skapar Application Load Balancer och Target Group
 - Exporterar `ALB_SG`, `ALB_DNS`, `TG_ARN`
 
-![Cloudcraft Arkitektur](images/ALBinfra2.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/ALBinfra2.jpg)
 
 ---
 
@@ -96,7 +96,7 @@ chmod +x WP-infra/scripts/deploy-all.sh
 - Kopplar till Launch Template och ALB
 - Parametrar: subnät, LT, TG
 
-![Cloudcraft Arkitektur](images/ASGinfrastructure.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/ASGinfrastructure.jpg)
 
 ---
 
@@ -105,7 +105,7 @@ chmod +x WP-infra/scripts/deploy-all.sh
 - Kontroll av hälsa: `aws elbv2 describe-target-health`
 - Test i webbläsare: `http://$ALB_DNS`
 
-![Cloudcraft Arkitektur](images/WordpressALB.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/WordpressALB.jpg)
 
 ---
 
@@ -138,7 +138,7 @@ För att kunna följa tutorialen
 
 https://github.com/AndreasVilhelmsson/AWS-PROJECT/tree/main
 
-![Cloudcraft Arkitektur](images/filstruktur2.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/filstruktur2.jpg)
 
 ---
 
@@ -484,7 +484,7 @@ Outputs:
       Name: !Sub "${AWS::StackName}-TgArn"
 ```
 
-![Cloudcraft Arkitektur](images/ASGinfrastructure.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/ASGinfrastructure.jpg)
 
 6. **Auto Scaling Group (ASG)**
 
@@ -783,10 +783,10 @@ Arbetet gav mig praktisk erfarenhet av:
 - Att använda Auto Scaling + ALB för hög tillgänglighet.
 - Att använda bashscript för att lösa uppgiften i olika moment
 
-![Cloudcraft Arkitektur](images/infrastructurediagram.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/infrastructurediagram.jpg)
 
 Allt är kopplat till kostnader här är en kalkyl på vad denna lösning hade kostat att ha om man hade behållt följande struktur
 
-![Cloudcraft Arkitektur](images/kostnader.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/kostnader.jpg)
 
 ---
