@@ -543,14 +543,14 @@ Outputs:
       Name: !Sub "${AWS::StackName}-AsgName"
 ```
 
-![Cloudcraft Arkitektur](images/WordpressALB.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/WordpressALB.jpg)
 
 7. **Verifiera WordPress-installation**
 
 - Öppna DNS för ALB (`wp-alb-xxxx.eu-west-1.elb.amazonaws.com`).
 - WordPress-installationen startar.
 
-![Cloudcraft Arkitektur](images/securitydiagram.jpg)
+![Cloudcraft Arkitektur](WP-infra/images/securitydiagram.jpg)
 
 ---
 
