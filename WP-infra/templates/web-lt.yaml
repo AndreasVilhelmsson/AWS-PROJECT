@@ -22,7 +22,8 @@ Resources:
         InstanceType: !Ref InstanceType
         KeyName: !Ref KeyPairName
         SecurityGroupIds:
-          - !ImportValue base-storage-WebSgId
+          SecurityGroupIds:
+  - !ImportValue web-sg-WebInstanceSgId
         MetadataOptions:
           HttpTokens: required
         UserData:

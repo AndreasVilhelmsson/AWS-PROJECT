@@ -25,12 +25,18 @@ export DB_PASSWORD=${DB_PASSWORD:-"StarktLosen123"}
 MY_IP=$(curl -s --max-time 2 ifconfig.me || true)
 export MY_CIDR="${MY_IP:+$MY_IP/32}"
 
+# Hämta Security Groups, ALB DNS och TargetGroup ARN från CloudFormation exports
 export WEB_SG=$(_aws cloudformation list-exports \
   --query "Exports[?Name=='base-storage-WebSgId'].Value" --output text)
+
 export ALB_SG=$(_aws cloudformation list-exports \
   --query "Exports[?Name=='web-alb-AlbSgId'].Value" --output text)
+
 export ALB_DNS=$(_aws cloudformation list-exports \
-  --query "Exports[?Name=='web-alb-AlbDns'].Value" --output text)
+  --query "Exports[?Name=='web-alb-AlbDnsName'].Value" --output text)
+
+export TG_ARN=$(_aws cloudformation list-exports \
+  --query "Exports[?Name=='web-alb-TgArn'].Value" --output text)
 
 export AWS_PAGER=""
 export AWSCLI_PAGER=""
@@ -43,6 +49,7 @@ _say "KEYPAIR_NAME=$KEYPAIR_NAME"
 _say "WEB_SG=$WEB_SG"
 _say "ALB_SG=$ALB_SG"
 _say "ALB_DNS=$ALB_DNS"
+_say "TG_ARN=$TG_ARN"
 _say "MY_CIDR=$MY_CIDR"
 
 _is_sourced && return 0 || true
