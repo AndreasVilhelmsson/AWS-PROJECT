@@ -35,6 +35,7 @@ Eftersom dina instanser ligger i olika Availability Zones (AZ) ser ALB till att 
 - **S3 bucket**: För backup och lagring av statiska filer.
 
 ![Cloudcraft Arkitektur](images/securitydiagram.jpg)
+![Ill](images/securitydiagram.jpg)
 
 ---
 
