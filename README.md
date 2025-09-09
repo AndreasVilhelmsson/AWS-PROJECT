@@ -489,6 +489,7 @@ Outputs:
 6. **Auto Scaling Group (ASG)**
 
 - Skapa en ASG som använder Launch Template och ALB target group.
+- test
 - CloudFormation-mall: `templates/web-asg.yaml`
 
 ```yaml
